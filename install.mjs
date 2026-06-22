@@ -88,17 +88,15 @@ function help() {
   node install.mjs --uninstall   remove the hook
 
 After installing, start (or continue) any Claude Code session — each prompt is
-recorded into that project at  <project>/.claude-usage/usage.ndjson.
+recorded into that project's own  .claude-usage/  folder, which holds the data,
+its own copy of the viewer, and a config.json of your saved view settings.
 
-View the dashboard for a project (reads the folder you launch it from, or a
-path you pass):
+View a project (after its first prompt):
 
-  cd <your project> && node "${path.join(APP, "viewer", "server.mjs")}"
-  node "${path.join(APP, "viewer", "server.mjs")}" <path-to-project>
-                                                   →  http://localhost:4317
+  cd <your project> && node .claude-usage/viewer/server.mjs   →  http://localhost:4317
 
-Tip: add  .claude-usage/  to the project's .gitignore. To pool every project
-into one dashboard, set CLAUDE_USAGE_DIR to a shared folder (hook + viewer).
+Add  .claude-usage/  to the project's .gitignore. To pool every project into one
+shared dashboard instead, set CLAUDE_USAGE_DIR (on the hook + the viewer).
 `);
 }
 
@@ -114,8 +112,8 @@ if (args.has("--help") || args.has("-h")) {
   copyApp();
   console.log(`  • copied app to ${APP}`);
   addHook(settingsPath(scope));
-  console.log(`\nDone. Prompts are recorded into each project at  <project>/.claude-usage/usage.ndjson`);
-  console.log(`Launch the dashboard from inside a project:\n`);
-  console.log(`  node "${path.join(APP, "viewer", "server.mjs")}"   →  http://localhost:4317`);
+  console.log(`\nDone. Each project records into its own  .claude-usage/  folder`);
+  console.log(`(data + a bundled viewer + saved view config). After a project's first prompt:\n`);
+  console.log(`  cd <your project> && node .claude-usage/viewer/server.mjs   →  http://localhost:4317`);
   console.log(`  (tip: add  .claude-usage/  to that project's .gitignore)\n`);
 }

@@ -5,6 +5,8 @@
 // Robustness contract: never block Claude. Everything is wrapped in try/catch,
 // nothing is written to stdout, and the process always exits 0.
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildTurns } from "./lib/transcript.mjs";
 import { upsertSession } from "./lib/store.mjs";
 import {
@@ -13,6 +15,31 @@ import {
   settingsCandidates,
   deriveTranscriptPath,
 } from "./lib/paths.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Make each project self-contained: copy the viewer + a default config into
+// <project>/.claude-usage/ so it can be viewed in place. Skipped in aggregate
+// mode (CLAUDE_USAGE_DIR). Idempotent and best-effort.
+function ensureBundle(cwd) {
+  if (process.env.CLAUDE_USAGE_DIR) return;
+  try {
+    const base = path.join(cwd, ".claude-usage");
+    const viewerSrc = path.join(__dirname, "..", "viewer");
+    const viewerDst = path.join(base, "viewer");
+    if (fs.existsSync(viewerSrc) && !fs.existsSync(path.join(viewerDst, "server.mjs"))) {
+      fs.cpSync(viewerSrc, viewerDst, { recursive: true });
+    }
+    const cfg = path.join(base, "config.json");
+    if (!fs.existsSync(cfg)) {
+      fs.mkdirSync(base, { recursive: true });
+      fs.writeFileSync(
+        cfg,
+        JSON.stringify({ title: path.basename(cwd), port: 4317, ui: {} }, null, 2) + "\n"
+      );
+    }
+  } catch {}
+}
 
 function readStdin() {
   try {
@@ -57,6 +84,7 @@ async function main() {
   const sid = sessionId || (turns[0] && turns[0].sessionId);
   if (!sid) return;
   await upsertSession(workspaceFile(cwd), sid, turns);
+  ensureBundle(cwd);
 }
 
 main()

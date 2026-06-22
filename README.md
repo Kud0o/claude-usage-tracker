@@ -30,7 +30,7 @@ dashboard to slice through it.
   and tool/subagent/thinking counts.
 - **Accurate accounting** — dedupes streamed transcript lines, attributes **subagent**
   token spend to the parent prompt, and prices each message at *its own* model.
-- **Per-project storage** — each project keeps its own records in `<project>/.claude-usage/`; safe under concurrent sessions. Opt into a combined dashboard with one env var.
+- **Self-contained per project** — each project's `.claude-usage/` holds its data, a bundled viewer, and your saved view settings (`config.json`). Safe under concurrent sessions. Opt into a combined dashboard with one env var.
 - **Insightful dashboard** — summary cards, charts (tokens & cost over time, cost-by-model,
   context-fill distribution, mode split), filters, and click-to-expand drill-down.
 - **Zero dependencies, zero build** — pure Node (`fs`/`http`). Nothing to `npm install`.
@@ -44,11 +44,12 @@ npx -y github:Kud0o/claude-usage-tracker
 ```
 
 That registers the `Stop` hook for every workspace. Now just use Claude Code —
-each prompt is recorded automatically into that project at
-`<project>/.claude-usage/usage.ndjson`. When you want to look:
+each project becomes **self-contained**: its data, its own copy of the viewer,
+and your saved view settings all land in `<project>/.claude-usage/`. To look:
 
 ```sh
-node ~/.claude/usage-tracker/app/viewer/server.mjs   # dashboard → http://localhost:4317
+cd <your project>
+node .claude-usage/viewer/server.mjs   # dashboard for this project → http://localhost:4317
 ```
 
 To remove it: `npx -y github:Kud0o/claude-usage-tracker --uninstall`.
@@ -86,21 +87,18 @@ The installer makes exactly two changes: it copies the app to
 
 ### 3. View the dashboard
 
-The viewer reads the project you launch it from — or a project path you pass:
+After a project's first prompt, it has its own viewer inside `.claude-usage/`.
+Run it from the project:
 
 ```sh
-cd <your project>                                            # then:
-node ~/.claude/usage-tracker/app/viewer/server.mjs           # reads ./.claude-usage
-
-# …or point it at a project explicitly:
-node ~/.claude/usage-tracker/app/viewer/server.mjs <path-to-project>
-
-# custom port:
-PORT=8080 node ~/.claude/usage-tracker/app/viewer/server.mjs
+cd <your project>
+node .claude-usage/viewer/server.mjs            # → http://localhost:4317
 ```
 
-Open **http://localhost:4317**. Add `.claude-usage/` to your project's
-`.gitignore` so the records don't get committed.
+Your filters, sort order, and grouping are saved per project in
+`.claude-usage/config.json` (set `"port"` there to change the default port).
+Add `.claude-usage/` to your project's `.gitignore` so the records don't get
+committed.
 
 ### 4. Uninstall
 
@@ -136,19 +134,22 @@ Three details make the numbers trustworthy (all in [`src/lib/transcript.mjs`](sr
 
 ## Where the data lives
 
-By default, **inside each project**:
+Everything for a project lives **inside that project**, self-contained:
 
 ```
-<project>/.claude-usage/usage.ndjson
+<project>/.claude-usage/
+├── usage.ndjson     one JSON record per prompt (many sessions)
+├── config.json      the viewer's saved settings (title, port, filters, sort, grouping)
+└── viewer/          a copy of the dashboard — run it in place
 ```
 
-One JSON record per prompt, many sessions per file — the data stays with the project and
-never touches `~/.claude`. The dashboard reads this folder for whichever project you launch
-it from (or one you pass as an argument).
+The data never touches `~/.claude`, and the viewer that ships with each project reads its
+own sibling folder. (The hook itself lives once at `~/.claude/usage-tracker/app/`; only the
+recorded data + viewer copy are per-project.)
 
 **Combined dashboard (optional):** set `CLAUDE_USAGE_DIR` to a shared folder for both the
 hook and the viewer, and every project is collected there as `<encoded-cwd>.ndjson` — one
-dashboard across all your workspaces.
+dashboard across all your workspaces (no per-project bundle in this mode).
 
 **Concurrency:** two sessions in the *same* project use a lock-guarded atomic write
 (`tmp`+rename, stale-lock stealing, skip-on-timeout). Each `Stop` re-derives the whole

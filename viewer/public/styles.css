@@ -66,6 +66,11 @@ body > *:not(.grain) { position: relative; z-index: 1; }
   font-family: var(--display); font-style: italic; font-weight: 400;
   letter-spacing: normal; font-size: 21px; margin-left: 12px; color: var(--accent);
 }
+.proj {
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  border: 1px solid var(--line-2); padding: 4px 10px; border-radius: 6px;
+}
+.proj:empty { display: none; }
 .topmeta { display: flex; align-items: center; gap: 16px; font-size: 12px; }
 
 .btn {

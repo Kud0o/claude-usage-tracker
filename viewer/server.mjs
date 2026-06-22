@@ -1,21 +1,39 @@
 #!/usr/bin/env node
-// Zero-dependency local viewer for the Claude Code usage tracker.
-// Reads every per-workspace ndjson file, serves a JSON API + the dashboard SPA.
+// Self-contained, zero-dependency viewer. Reads ONE project's records + config
+// from a `.claude-usage` folder and serves the dashboard.
 //
-//   node viewer/server.mjs            -> http://localhost:4317
-//   PORT=8080 node viewer/server.mjs
+// It figures out which folder to read, in priority order:
+//   1. $CLAUDE_USAGE_DIR                       (explicit / aggregate mode)
+//   2. its own sibling folder, when this file was copied into a project at
+//      <project>/.claude-usage/viewer/server.mjs   → reads <project>/.claude-usage
+//   3. <argv path>/.claude-usage  or  <cwd>/.claude-usage
+//
+//   node server.mjs                 # reads ./.claude-usage
+//   node server.mjs /path/to/proj   # reads that project
+//   PORT=8080 node server.mjs
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { viewerDataDir } from "../src/lib/paths.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "public");
-const PORT = Number(process.env.PORT) || 4317;
-// Read the project you launch from, or a path passed as the first argument,
-// or CLAUDE_USAGE_DIR (aggregate mode).
-const DATA_DIR = viewerDataDir(process.argv[2] && path.resolve(process.argv[2]));
+
+function resolveDataDir() {
+  if (process.env.CLAUDE_USAGE_DIR) return process.env.CLAUDE_USAGE_DIR;
+  // Bundled inside a project: <project>/.claude-usage/viewer/server.mjs
+  if (
+    path.basename(__dirname) === "viewer" &&
+    path.basename(path.dirname(__dirname)) === ".claude-usage"
+  ) {
+    return path.dirname(__dirname);
+  }
+  const base = process.argv[2] ? path.resolve(process.argv[2]) : process.cwd();
+  return path.join(base, ".claude-usage");
+}
+
+const DATA_DIR = resolveDataDir();
+const CONFIG_FILE = path.join(DATA_DIR, "config.json");
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -24,12 +42,33 @@ const MIME = {
   ".svg": "image/svg+xml",
 };
 
-// Read + merge all workspace ndjson files. Tolerates partial/locked writes.
+// ---- per-project viewer config ----
+function loadConfig() {
+  let c = {};
+  try {
+    c = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")) || {};
+  } catch {}
+  if (!c.title) c.title = path.basename(path.dirname(DATA_DIR)) || "workspace";
+  if (!c.ui || typeof c.ui !== "object") c.ui = {};
+  return c;
+}
+function saveConfig(patch) {
+  const c = loadConfig();
+  const next = { ...c, ...patch, ui: { ...c.ui, ...(patch && patch.ui) } };
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2));
+  } catch {}
+  return next;
+}
+
+const PORT = Number(process.env.PORT) || loadConfig().port || 4317;
+
+// ---- data ----
 function loadEvents() {
-  const dir = DATA_DIR;
   let files = [];
   try {
-    files = fs.readdirSync(dir).filter((f) => f.endsWith(".ndjson"));
+    files = fs.readdirSync(DATA_DIR).filter((f) => f.endsWith(".ndjson"));
   } catch {
     return [];
   }
@@ -37,7 +76,7 @@ function loadEvents() {
   for (const f of files) {
     let text;
     try {
-      text = fs.readFileSync(path.join(dir, f), "utf8");
+      text = fs.readFileSync(path.join(DATA_DIR, f), "utf8");
     } catch {
       continue;
     }
@@ -53,7 +92,6 @@ function loadEvents() {
   return events;
 }
 
-// Strip the heavy full-text fields for the list endpoint; keep previews.
 function toListItem(e) {
   const { prompt, response, ...rest } = e;
   return {
@@ -67,28 +105,39 @@ function send(res, code, body, type = "application/json") {
   res.writeHead(code, { "Content-Type": type, "Cache-Control": "no-store" });
   res.end(body);
 }
+const readBody = (req) =>
+  new Promise((resolve) => {
+    let d = "";
+    req.on("data", (c) => (d += c));
+    req.on("end", () => resolve(d));
+  });
 
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, "http://localhost");
-  const route = url.pathname;
-
+const server = http.createServer(async (req, res) => {
+  const route = new URL(req.url, "http://localhost").pathname;
   try {
     if (route === "/api/events") {
-      const events = loadEvents();
-      return send(res, 200, JSON.stringify(events.map(toListItem)));
+      return send(res, 200, JSON.stringify(loadEvents().map(toListItem)));
     }
     if (route.startsWith("/api/event/")) {
       const id = decodeURIComponent(route.slice("/api/event/".length));
       const e = loadEvents().find((x) => x.id === id);
       return e ? send(res, 200, JSON.stringify(e)) : send(res, 404, "{}");
     }
-    // Static files
-    let rel = route === "/" ? "/index.html" : route;
-    rel = rel.replace(/\.\.+/g, ""); // basic traversal guard
+    if (route === "/api/config") {
+      if (req.method === "POST") {
+        let patch = {};
+        try {
+          patch = JSON.parse(await readBody(req)) || {};
+        } catch {}
+        return send(res, 200, JSON.stringify(saveConfig(patch)));
+      }
+      return send(res, 200, JSON.stringify(loadConfig()));
+    }
+    // static
+    let rel = (route === "/" ? "/index.html" : route).replace(/\.\.+/g, "");
     const file = path.join(PUBLIC, rel);
     if (!file.startsWith(PUBLIC)) return send(res, 403, "forbidden", "text/plain");
-    const data = fs.readFileSync(file);
-    return send(res, 200, data, MIME[path.extname(file)] || "application/octet-stream");
+    return send(res, 200, fs.readFileSync(file), MIME[path.extname(file)] || "application/octet-stream");
   } catch (err) {
     if (err.code === "ENOENT") return send(res, 404, "not found", "text/plain");
     return send(res, 500, "error", "text/plain");
@@ -97,6 +146,6 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n  Claude usage viewer  ->  http://localhost:${PORT}`);
-  console.log(`  reading: ${DATA_DIR}`);
-  console.log(`  (pass a project path as an argument, or set CLAUDE_USAGE_DIR to aggregate)\n`);
+  console.log(`  project: ${loadConfig().title}`);
+  console.log(`  reading: ${DATA_DIR}\n`);
 });

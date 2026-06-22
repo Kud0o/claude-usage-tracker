@@ -30,15 +30,6 @@ export function workspaceFile(cwd) {
   return path.join(cwd, PROJECT_DIRNAME, "usage.ndjson");
 }
 
-/**
- * Directory the viewer reads *.ndjson from.
- * Default: the .claude-usage folder of `baseDir` (or the current working dir).
- * CLAUDE_USAGE_DIR overrides it (aggregate mode).
- */
-export function viewerDataDir(baseDir) {
-  return process.env.CLAUDE_USAGE_DIR || path.join(baseDir || process.cwd(), PROJECT_DIRNAME);
-}
-
 /** A short, human label for a workspace (last path segment of the cwd). */
 export function workspaceLabel(cwd) {
   const parts = String(cwd || "").split(/[\\/]+/).filter(Boolean);

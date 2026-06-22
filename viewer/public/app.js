@@ -41,11 +41,53 @@ const T_OUT = (e) => e.usage.output;
 const T_TOTAL = (e) => e.usage.input + e.usage.output + e.usage.cacheCreate + e.usage.cacheRead;
 const COST = (e) => e.cost.total;
 
+// ---------- config (saved per project) ----------
+async function boot() {
+  let cfg = {};
+  try { cfg = await (await fetch("/api/config")).json(); } catch {}
+  if (cfg.title) {
+    document.title = cfg.title + " · Claude Usage";
+    const t = $("#proj"); if (t) t.textContent = cfg.title;
+  }
+  const ui = cfg.ui || {};
+  if (ui.filters) state.filters = { ...state.filters, ...ui.filters };
+  if (ui.sort && ui.sort.key) state.sort = ui.sort;
+  if (typeof ui.group === "boolean") state.group = ui.group;
+  await load();
+}
+
+let saveTimer;
+function persist() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ui: { filters: state.filters, sort: state.sort, group: state.group } }),
+    }).catch(() => {});
+  }, 400);
+}
+
+// Sync the on-screen controls to current state (after options are built).
+function reflect() {
+  const f = state.filters;
+  $("#f-search").value = f.search || "";
+  $("#f-workspace").value = f.workspace || "";
+  $("#f-model").value = f.model || "";
+  $("#f-mode").value = f.mode || "";
+  $("#f-effort").value = f.effort || "";
+  $("#f-since").value = f.since || "";
+  $("#f-ctx").value = f.ctx || 0;
+  $("#f-ctx-v").textContent = String(f.ctx || 0);
+  $("#f-group").checked = state.group;
+}
+
 // ---------- load ----------
 async function load() {
   const res = await fetch("/api/events");
   state.all = await res.json();
   buildFilterOptions();
+  reflect();
   apply();
 }
 
@@ -85,6 +127,7 @@ function apply() {
   renderTable();
   const r = state.all.length ? `${fmtWhen(state.all[state.all.length - 1].ts)} → ${fmtWhen(state.all[0].ts)}` : "no data";
   $("#meta-range").textContent = `${state.view.length}/${state.all.length} prompts · ${r}`;
+  persist();
 }
 
 // ---------- stats ----------
@@ -350,7 +393,7 @@ function bind() {
   const map = { "#f-workspace": "workspace", "#f-model": "model", "#f-mode": "mode", "#f-effort": "effort", "#f-since": "since" };
   for (const [sel, key] of Object.entries(map)) $(sel).addEventListener("change", (e) => { state.filters[key] = e.target.value; apply(); });
   $("#f-ctx").addEventListener("input", (e) => { state.filters.ctx = +e.target.value; $("#f-ctx-v").textContent = e.target.value; apply(); });
-  $("#f-group").addEventListener("change", (e) => { state.group = e.target.checked; renderTable(); });
+  $("#f-group").addEventListener("change", (e) => { state.group = e.target.checked; renderTable(); persist(); });
   $("#f-clear").addEventListener("click", () => {
     state.filters = { search: "", workspace: "", model: "", mode: "", effort: "", since: "", ctx: 0 };
     document.querySelectorAll(".ctl select").forEach((s) => (s.value = ""));
@@ -363,6 +406,7 @@ function bind() {
       const k = th.dataset.sort;
       state.sort = state.sort.key === k ? { key: k, dir: -state.sort.dir } : { key: k, dir: k === "ts" ? -1 : -1 };
       renderTable();
+      persist();
     })
   );
   $("#rows").addEventListener("click", (e) => {
@@ -373,4 +417,4 @@ function bind() {
 }
 
 bind();
-load();
+boot();
