@@ -20,8 +20,9 @@ const HOOK_CMD = `node "${path.join(APP, "src", "record.mjs")}"`;
 const MARKER = "usage-tracker"; // identifies our hook for idempotency / uninstall
 
 const args = new Set(process.argv.slice(2));
-const scope = args.has("--global") ? "global" : args.has("--local") ? "local" : null;
+const explicitScope = args.has("--local") ? "local" : args.has("--global") ? "global" : null;
 const uninstall = args.has("--uninstall");
+const scope = explicitScope || "global"; // bare invocation installs globally
 
 function settingsPath(scope) {
   return scope === "local"
@@ -80,9 +81,11 @@ function removeHook(file) {
 function help() {
   console.log(`Claude Code Usage Tracker — installer
 
-  node install.mjs --global      track every workspace   (~/.claude/settings.json)
-  node install.mjs --local       track this project only (./.claude/settings.local.json)
-  node install.mjs --uninstall [--global|--local]
+  npx -y github:Kud0o/claude-usage-tracker   one-line install (no clone needed)
+
+  node install.mjs               install globally — track every workspace
+  node install.mjs --local       track this project only
+  node install.mjs --uninstall   remove the hook
 
 After installing, start (or continue) any Claude Code session — each prompt is
 recorded into that project at  <project>/.claude-usage/usage.ndjson.
@@ -99,13 +102,13 @@ into one dashboard, set CLAUDE_USAGE_DIR to a shared folder (hook + viewer).
 `);
 }
 
-if (uninstall) {
-  console.log("Uninstalling usage tracker hook…");
-  removeHook(settingsPath(scope || "global"));
-  if (!scope) removeHook(settingsPath("local"));
-  console.log("Done. (app + data left in ~/.claude/usage-tracker — delete manually if desired.)");
-} else if (!scope) {
+if (args.has("--help") || args.has("-h")) {
   help();
+} else if (uninstall) {
+  console.log("Uninstalling usage tracker hook…");
+  removeHook(settingsPath(scope));
+  if (!explicitScope) removeHook(settingsPath("local"));
+  console.log("Done. (app left in ~/.claude/usage-tracker — delete manually if desired.)");
 } else {
   console.log(`Installing usage tracker (${scope})…`);
   copyApp();

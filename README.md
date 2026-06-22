@@ -37,20 +37,21 @@ dashboard to slice through it.
 
 ## Quick start
 
+One line — no clone, no config, no environment variables:
+
 ```sh
-git clone https://github.com/Kud0o/claude-usage-tracker.git
-cd claude-usage-tracker
+npx -y github:Kud0o/claude-usage-tracker
+```
 
-node install.mjs --global          # register the hook for every workspace
+That registers the `Stop` hook for every workspace. Now just use Claude Code —
+each prompt is recorded automatically into that project at
+`<project>/.claude-usage/usage.ndjson`. When you want to look:
 
-# …use Claude Code in any project…
-
-# then, from inside a project you've used:
+```sh
 node ~/.claude/usage-tracker/app/viewer/server.mjs   # dashboard → http://localhost:4317
 ```
 
-Each prompt is recorded automatically into that project at
-`<project>/.claude-usage/usage.ndjson`.
+To remove it: `npx -y github:Kud0o/claude-usage-tracker --uninstall`.
 
 ## Installation guide
 
@@ -63,20 +64,25 @@ Check Node: `node --version`.
 
 ### 2. Install the hook
 
-Pick a scope:
+One line — nothing to clone, configure, or set as an environment variable:
 
 ```sh
-node install.mjs --global     # track EVERY workspace   → ~/.claude/settings.json
-node install.mjs --local      # track THIS project only  → ./.claude/settings.local.json
+npx -y github:Kud0o/claude-usage-tracker
 ```
 
-The installer:
-1. Copies the app to `~/.claude/usage-tracker/app/`.
-2. Adds a `Stop` hook pointing there (your existing settings keys are preserved).
-3. Creates the data directory.
+Or, if you've cloned the repo:
 
-> Installing `--global` also enables tracking for your **current** session, so your
-> next prompts are the first ones recorded.
+```sh
+node install.mjs              # global — every workspace   → ~/.claude/settings.json
+node install.mjs --local      # this project only          → ./.claude/settings.local.json
+```
+
+The installer makes exactly two changes: it copies the app to
+`~/.claude/usage-tracker/app/` and adds one `Stop` hook entry to your settings
+(existing keys are preserved). No environment variables, no other config.
+
+> Installing also enables tracking for your **current** session, so your next
+> prompts are the first ones recorded.
 
 ### 3. View the dashboard
 
