@@ -215,6 +215,20 @@ svg { display: block; width: 100%; overflow: visible; }
   font-family: var(--mono); font-size: 10px; padding: 2px 7px; border-radius: 5px;
   border: 1px solid var(--line-2); color: var(--muted); white-space: nowrap;
 }
+.skill-chip {
+  font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 5px; padding: 1px 6px; white-space: nowrap;
+}
+.dskills { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: -8px 0 20px; }
+.dskills-k { font-family: var(--mono); font-weight: 600; font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+.skill-tag {
+  font-family: var(--mono); font-size: 11px; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 6px; padding: 3px 9px;
+}
 .tag.plan { color: var(--violet); border-color: rgba(155,140,214,0.4); }
 .tag.acceptEdits { color: var(--green); border-color: rgba(132,176,106,0.4); }
 .tag.bypassPermissions { color: var(--red); border-color: rgba(211,91,74,0.4); }

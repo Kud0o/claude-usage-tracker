@@ -138,6 +138,23 @@ function countBlocks(messages) {
   return { toolCalls, thinking };
 }
 
+// Skills invoked during a turn = Skill tool_use blocks (input.skill / .command).
+function collectSkills(messages) {
+  const seen = new Set();
+  const out = [];
+  for (const m of messages) {
+    for (const b of m.blocks) {
+      if (!b || b.type !== "tool_use" || b.name !== "Skill" || !b.input) continue;
+      const s = b.input.skill || b.input.command || b.input.name;
+      if (s && !seen.has(String(s))) {
+        seen.add(String(s));
+        out.push(String(s));
+      }
+    }
+  }
+  return out;
+}
+
 function responseText(messages) {
   const parts = [];
   for (const m of messages) {
@@ -236,6 +253,7 @@ function finalizeTurn(t, subByPrompt, opts) {
     (lastUsage.cache_creation_input_tokens || 0);
 
   const { toolCalls, thinking } = countBlocks(main);
+  const skills = collectSkills(main);
   const prompt = promptText(e);
   const response = responseText(main);
   const startTs = e.timestamp;
@@ -263,6 +281,7 @@ function finalizeTurn(t, subByPrompt, opts) {
     speed: (last && last.speed) || null,
     permissionMode: e.permissionMode || "default",
     effortLevel: opts.effortLevel || null,
+    skills,
     usage: tokens,
     contextTokens: ctxTokens,
     contextMax: ctxMax,

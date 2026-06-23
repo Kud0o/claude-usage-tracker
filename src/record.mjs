@@ -21,7 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Bump when the bundled viewer changes so existing projects refresh their copy
 // on the next prompt (after the user re-installs the app via npx). Keep in step
 // with viewer changes.
-const VIEWER_VERSION = "2";
+const VIEWER_VERSION = "3";
 
 // Make each project self-contained: copy the viewer + a default config into
 // <project>/.claude-usage/ so it can be viewed in place. Skipped in aggregate

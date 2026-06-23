@@ -196,6 +196,11 @@ function renderCharts() {
   const modelCount = tally(v, (e) => shortModel(e.model), () => 1);
   const modeCount = tally(v, (e) => e.permissionMode, () => 1);
 
+  // skills invoked across the filtered view
+  const skillCount = {};
+  for (const e of v) for (const s of e.skills || []) skillCount[s] = (skillCount[s] || 0) + 1;
+  const skillsUsed = Object.keys(skillCount).length;
+
   // context distribution (10 buckets)
   const buckets = new Array(10).fill(0);
   for (const e of v) { const b = Math.min(9, Math.floor((e.contextFillPct || 0) / 10)); buckets[b]++; }
@@ -208,6 +213,7 @@ function renderCharts() {
     <div class="card"><h3>context fill distribution</h3>${histogram(buckets)}</div>
     <div class="card"><h3>permission mode</h3>${donut(modeCount, (x) => x + " prompts")}</div>
     <div class="card"><h3>prompts by model</h3>${donut(modelCount, (x) => x + " prompts")}</div>
+    ${skillsUsed ? `<div class="card"><h3>skills invoked <b>${skillsUsed}</b></h3>${donut(skillCount, (x) => x + "×")}</div>` : ""}
     <div class="card"><h3>est. cost / day <b class="cost-b">${fmtUsd(cost.reduce((a, b) => a + b, 0))}</b></h3>${barChart(keys, cost, cssv("--faint"), (x) => fmtUsd(x))}</div>
   `;
 }
@@ -316,7 +322,7 @@ function rowHtml(e) {
     <td class="num">${fmtTok(T_OUT(e))}</td>
     <td class="num">${ctxBar(e.contextFillPct)}</td>
     <td class="num cost-cell">${fmtUsd(COST(e))}</td>
-    <td class="prompt-cell">${esc(e.promptPreview)}</td>
+    <td class="prompt-cell">${e.skills && e.skills.length ? `<span class="skill-chip" title="skills: ${esc(e.skills.join(", "))}">▸ ${e.skills.length}</span> ` : ""}${esc(e.promptPreview)}</td>
   </tr>`;
 }
 
@@ -441,6 +447,7 @@ async function openDrawer(id) {
       <span>${fmtDur(e.durationMs)}</span><span>${esc(e.gitBranch || "")}</span>
       <span>v${esc(e.cliVersion || "")}</span><span>${esc(e.serviceTier || "")}/${esc(e.speed || "")}</span>
     </div>
+    ${e.skills && e.skills.length ? `<div class="dskills"><span class="dskills-k">skills</span>${e.skills.map((s) => `<span class="skill-tag">${esc(s)}</span>`).join("")}</div>` : ""}
     <div class="dgrid">
       <div><div class="k">cost</div><div class="v accent">${fmtUsd(c.total)}</div></div>
       <div><div class="k">context</div><div class="v">${(e.contextFillPct||0).toFixed(1)}% <span class="muted" style="font-size:11px">${fmtTok(e.contextTokens)}/${fmtTok(e.contextMax)}</span></div></div>
