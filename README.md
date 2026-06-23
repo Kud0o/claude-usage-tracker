@@ -37,6 +37,9 @@ dashboard to slice through it.
   **locale-aware** numbers and dates, and broad-script typography (IBM Plex). The drill-down
   **renders Markdown** — tables, code blocks, and lists from your prompts and responses display
   as formatted content (with a raw toggle), safely escaped.
+- **Manage your own data** — delete the prompts currently shown (scoped by any filter) or a
+  single record from the drill-down to reclaim disk space; the viewer rewrites the on-disk
+  files in place and reports how much was freed.
 - **Zero dependencies, zero build** — pure Node (`fs`/`http`) on the server, vanilla JS on the
   client. Nothing to `npm install`, nothing to compile.
 
@@ -139,6 +142,9 @@ manually if you want them gone.
   plus a usage and cost breakdown.
 - **Theme & locale** — light/dark toggle (defaults to your OS preference, remembered across visits);
   numbers, dates, and currency follow the viewer's browser locale.
+- **Delete data** — a *delete shown* action removes exactly the records the current filters match
+  (scope it by workspace, model, date, or search first), and each detail panel can delete that one
+  prompt. Both ask for confirmation and report the space freed; deletions are permanent.
 
 ## How it works
 
@@ -194,9 +200,9 @@ src/lib/transcript.mjs  parse JSONL → per-prompt turns (+ subagent attribution
 src/lib/pricing.mjs     model → context window + USD pricing
 src/lib/store.mjs       lock-guarded atomic per-workspace upsert
 src/lib/paths.mjs       data dir / settings / cwd-encoding helpers
-viewer/server.mjs       zero-dep HTTP API + static host
+viewer/server.mjs       zero-dep HTTP API (list · detail · config · delete) + static host
 viewer/public/          the dashboard SPA
-install.mjs             installer (--global | --local | --uninstall)
+install.mjs             installer (--global | --local | --update | --uninstall)
 ```
 
 ## License

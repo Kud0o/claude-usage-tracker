@@ -38,6 +38,35 @@ function fmtDur(ms) {
   return Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
 }
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function fmtBytes(n) {
+  n = n || 0;
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+  if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
+  return n + " B";
+}
+let toastTimer;
+function toast(msg) {
+  const t = $("#toast"); if (!t) return;
+  t.textContent = msg; t.hidden = false; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.classList.remove("show"); setTimeout(() => (t.hidden = true), 300); }, 3200);
+}
+// Permanently delete records by id (irreversible) — always behind a confirm.
+async function delEvents(ids, label) {
+  ids = (ids || []).filter(Boolean);
+  if (!ids.length) return;
+  if (!confirm(`Permanently delete ${ids.length} ${label}?\n\nThis removes the record(s) from disk and cannot be undone.`)) return;
+  let r = {};
+  try {
+    r = await (await fetch("/api/events", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    })).json();
+  } catch {}
+  await load();
+  toast(`Deleted ${r.removed || 0} record(s) · freed ${fmtBytes(r.bytesFreed)}`);
+}
 const dayKey = (ts) => (ts || "").slice(0, 10);
 
 // derived accessors used for sorting
@@ -132,6 +161,8 @@ function apply() {
   renderTable();
   const r = state.all.length ? `${fmtWhen(state.all[state.all.length - 1].ts)} → ${fmtWhen(state.all[0].ts)}` : "no data";
   $("#meta-range").textContent = `${state.view.length}/${state.all.length} prompts · ${r}`;
+  const del = $("#f-del");
+  if (del) { del.textContent = `delete shown (${state.view.length})`; del.disabled = state.view.length === 0; }
   persist();
 }
 
@@ -438,7 +469,7 @@ async function openDrawer(id) {
   if (!e || !e.id) { $("#drawer-panel").innerHTML = `<div class="muted mono" style="padding:40px">not found</div>`; return; }
   const u = e.usage, c = e.cost, k = e.counts;
   $("#drawer-panel").innerHTML = `
-    <div class="dhead"><span class="deyebrow">prompt detail</span><button class="btn ghost dclose" data-close>✕ close</button></div>
+    <div class="dhead"><span class="deyebrow">prompt detail</span><span class="dhead-actions"><button class="btn danger ddel" data-del="${esc(e.id)}">delete</button><button class="btn ghost dclose" data-close>✕ close</button></span></div>
     <h2>${esc(e.workspace)} <span class="muted" style="font-family:var(--mono);font-size:13px">/ ${esc(e.slug || "")}</span></h2>
     <div class="dmeta">
       <span>${fmtWhen(e.ts)}</span><span>${esc(e.model)}</span>
@@ -494,6 +525,7 @@ function bind() {
     $("#f-search").value = ""; $("#f-since").value = ""; $("#f-ctx").value = 0; $("#f-ctx-v").textContent = "0";
     apply();
   });
+  $("#f-del").addEventListener("click", () => delEvents(state.view.map((e) => e.id), "prompt(s) shown"));
   $("#refresh").addEventListener("click", load);
   $("#theme").addEventListener("click", () => {
     const cur = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
@@ -510,8 +542,14 @@ function bind() {
   $("#rows").addEventListener("click", (e) => {
     const tr = e.target.closest("tr.row"); if (tr) openDrawer(tr.dataset.id);
   });
-  $("#drawer").addEventListener("click", (e) => {
+  $("#drawer").addEventListener("click", async (e) => {
     if (e.target.dataset.close !== undefined) return closeDrawer();
+    if (e.target.dataset.del !== undefined) {
+      const id = e.target.dataset.del;
+      closeDrawer();
+      await delEvents([id], "this prompt");
+      return;
+    }
     if (e.target.dataset.raw !== undefined) {
       const block = e.target.closest(".block"); if (!block) return;
       const raw = block.classList.toggle("show-raw");

@@ -101,6 +101,61 @@ function toListItem(e) {
   };
 }
 
+// Permanently remove records by id across all ndjson files. Rewrites each file
+// atomically (tmp + rename); deletes a file that becomes empty. Returns how many
+// records were removed and how many bytes that freed.
+function deleteEvents(ids) {
+  const set = new Set(ids || []);
+  if (!set.size) return { removed: 0, bytesFreed: 0 };
+  let files = [];
+  try {
+    files = fs.readdirSync(DATA_DIR).filter((f) => f.endsWith(".ndjson"));
+  } catch {
+    return { removed: 0, bytesFreed: 0 };
+  }
+  let removed = 0,
+    bytesFreed = 0;
+  for (const f of files) {
+    const fp = path.join(DATA_DIR, f);
+    let text;
+    try {
+      text = fs.readFileSync(fp, "utf8");
+    } catch {
+      continue;
+    }
+    const before = Buffer.byteLength(text);
+    const kept = [];
+    let changed = false;
+    for (const line of text.split("\n")) {
+      const s = line.trim();
+      if (!s) continue;
+      let id = null;
+      try {
+        id = JSON.parse(s).id;
+      } catch {}
+      if (id != null && set.has(id)) {
+        removed++;
+        changed = true;
+      } else {
+        kept.push(s);
+      }
+    }
+    if (!changed) continue;
+    const out = kept.length ? kept.join("\n") + "\n" : "";
+    try {
+      if (out) {
+        const tmp = fp + ".tmp";
+        fs.writeFileSync(tmp, out);
+        fs.renameSync(tmp, fp);
+      } else {
+        fs.rmSync(fp, { force: true });
+      }
+      bytesFreed += Math.max(0, before - Buffer.byteLength(out));
+    } catch {}
+  }
+  return { removed, bytesFreed };
+}
+
 function send(res, code, body, type = "application/json") {
   res.writeHead(code, { "Content-Type": type, "Cache-Control": "no-store" });
   res.end(body);
@@ -116,6 +171,13 @@ const server = http.createServer(async (req, res) => {
   const route = new URL(req.url, "http://localhost").pathname;
   try {
     if (route === "/api/events") {
+      if (req.method === "DELETE") {
+        let body = {};
+        try {
+          body = JSON.parse(await readBody(req)) || {};
+        } catch {}
+        return send(res, 200, JSON.stringify(deleteEvents(body.ids)));
+      }
       return send(res, 200, JSON.stringify(loadEvents().map(toListItem)));
     }
     if (route.startsWith("/api/event/")) {
