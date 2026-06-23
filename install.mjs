@@ -19,10 +19,27 @@ const APP = path.join(HOME, ".claude", "usage-tracker", "app");
 const HOOK_CMD = `node "${path.join(APP, "src", "record.mjs")}"`;
 const MARKER = "usage-tracker"; // identifies our hook for idempotency / uninstall
 
+// ---- console styling (zero-dep ANSI; auto-off when not a TTY or NO_COLOR) ----
+const COLOR = process.stdout.isTTY && !process.env.NO_COLOR && process.env.TERM !== "dumb";
+const sgr = (code) => (s) => (COLOR ? `\x1b[${code}m${s}\x1b[0m` : `${s}`);
+const bold = sgr(1), dim = sgr(2), green = sgr("32;1"), red = sgr("31;1"), cyan = sgr(36), gray = sgr(90);
+const ok = (msg) => console.log(`  ${green("✓")} ${msg}`);
+const skip = (msg) => console.log(`  ${gray("•")} ${dim(msg)}`);
+const fail = (msg) => console.log(`  ${red("✗")} ${msg}`);
+const cmd = (s) => cyan(s);
+const rule = () => console.log(gray("  ────────────────────────────────────────────"));
+function banner(subtitle) {
+  console.log();
+  console.log(`  ${bold(cyan("Claude Usage Tracker"))}  ${dim("·")}  ${dim(subtitle)}`);
+  rule();
+}
+
 const args = new Set(process.argv.slice(2));
 const explicitScope = args.has("--local") ? "local" : args.has("--global") ? "global" : null;
 const uninstall = args.has("--uninstall");
+const update = args.has("--update");
 const scope = explicitScope || "global"; // bare invocation installs globally
+const VERSION = readJson(path.join(REPO, "package.json")).version || "0";
 
 function settingsPath(scope) {
   return scope === "local"
@@ -56,64 +73,82 @@ function addHook(file) {
   s.hooks.Stop = s.hooks.Stop || [];
   const exists = JSON.stringify(s.hooks.Stop).includes(MARKER);
   if (exists) {
-    console.log(`  • hook already present in ${file}`);
+    skip(`Stop hook already registered  ${gray(file)}`);
   } else {
     s.hooks.Stop.push({ hooks: [{ type: "command", command: HOOK_CMD }] });
     writeJson(file, s);
-    console.log(`  • registered Stop hook in ${file}`);
+    ok(`registered Stop hook  ${gray(file)}`);
   }
 }
 
 function removeHook(file) {
   const s = readJson(file);
   if (!s.hooks || !Array.isArray(s.hooks.Stop)) {
-    console.log(`  • no Stop hooks in ${file}`);
+    skip(`no hooks found  ${gray(file)}`);
     return;
   }
   const before = s.hooks.Stop.length;
   s.hooks.Stop = s.hooks.Stop.filter((g) => !JSON.stringify(g).includes(MARKER));
+  const removed = before - s.hooks.Stop.length;
   if (s.hooks.Stop.length === 0) delete s.hooks.Stop;
   if (s.hooks && Object.keys(s.hooks).length === 0) delete s.hooks;
   writeJson(file, s);
-  console.log(`  • removed ${before - (s.hooks?.Stop?.length || 0)} hook(s) from ${file}`);
+  if (removed) ok(`removed ${removed} hook(s)  ${gray(file)}`);
+  else skip(`no matching hook  ${gray(file)}`);
 }
 
 function help() {
-  console.log(`Claude Code Usage Tracker — installer
-
-  npx -y github:Kud0o/claude-usage-tracker   one-line install (no clone needed)
-
-  node install.mjs               install globally — track every workspace
-  node install.mjs --local       track this project only
-  node install.mjs --uninstall   remove the hook
-
-After installing, start (or continue) any Claude Code session — each prompt is
-recorded into that project's own  .claude-usage/  folder, which holds the data,
-its own copy of the viewer, and a config.json of your saved view settings.
-
-View a project (after its first prompt):
-
-  cd <your project> && node .claude-usage/viewer/server.mjs   →  http://localhost:4317
-
-Add  .claude-usage/  to the project's .gitignore. To pool every project into one
-shared dashboard instead, set CLAUDE_USAGE_DIR (on the hook + the viewer).
-`);
+  banner("installer");
+  console.log();
+  console.log(`  ${bold("Usage")}`);
+  console.log(`    ${cmd("npx -y github:Kud0o/claude-usage-tracker")}   ${dim("one-line install")}`);
+  console.log(`    ${cmd("node install.mjs")}              ${dim("install globally — every workspace")}`);
+  console.log(`    ${cmd("node install.mjs --local")}      ${dim("this project only")}`);
+  console.log(`    ${cmd("node install.mjs --update")}     ${dim("refresh app to the latest version")}`);
+  console.log(`    ${cmd("node install.mjs --uninstall")}  ${dim("remove the hook")}`);
+  console.log();
+  console.log(`  ${bold("View a project")}  ${dim("(after its first prompt)")}`);
+  console.log(`    ${cmd("node .claude-usage/viewer/server.mjs")}   ${dim("→ http://localhost:4317")}`);
+  console.log();
+  console.log(dim(`  Each project records into its own  .claude-usage/  folder (data + a`));
+  console.log(dim(`  bundled viewer + saved settings). Add it to the project's .gitignore.`));
+  console.log(dim(`  Set CLAUDE_USAGE_DIR to pool every project into one shared dashboard.`));
+  console.log();
 }
 
 if (args.has("--help") || args.has("-h")) {
   help();
+} else if (update) {
+  banner("update");
+  console.log();
+  copyApp();
+  ok(`updated app to v${VERSION}  ${gray(APP)}`);
+  addHook(settingsPath(scope)); // ensure the hook exists; no-op if already there
+  console.log();
+  console.log(`  ${green("✓")} ${bold("Up to date.")} ${dim("Open projects refresh their viewer on the next prompt.")}`);
+  console.log();
 } else if (uninstall) {
-  console.log("Uninstalling usage tracker hook…");
+  banner("uninstall");
+  console.log();
   removeHook(settingsPath(scope));
   if (!explicitScope) removeHook(settingsPath("local"));
-  console.log("Done. (app left in ~/.claude/usage-tracker — delete manually if desired.)");
+  console.log();
+  console.log(`  ${bold("Done.")}`);
+  console.log(dim(`  App + recorded data left in  ~/.claude/usage-tracker  — delete manually if desired.`));
+  console.log();
 } else {
-  console.log(`Installing usage tracker (${scope})…`);
+  banner(`install · ${scope}`);
+  console.log();
   copyApp();
-  console.log(`  • copied app to ${APP}`);
+  ok(`copied app v${VERSION}  ${gray(APP)}`);
   addHook(settingsPath(scope));
-  console.log(`\nDone. Each project records into its own  .claude-usage/  folder`);
-  console.log(`(data + a bundled viewer + saved view config). After a project's first prompt:\n`);
-  console.log(`  cd <your project> && node .claude-usage/viewer/server.mjs   →  http://localhost:4317`);
-  console.log(`  (tip: add  .claude-usage/  to that project's .gitignore)\n`);
+  console.log();
+  console.log(`  ${green("✓")} ${bold("Tracking is live.")} ${dim("Your next prompts are the first recorded.")}`);
+  console.log();
+  console.log(`  ${bold("View a project")}  ${dim("(after its first prompt)")}`);
+  console.log(`    ${cmd("cd <your project>")}`);
+  console.log(`    ${cmd("node .claude-usage/viewer/server.mjs")}   ${dim("→ http://localhost:4317")}`);
+  console.log();
+  console.log(dim(`  Tip: add  .claude-usage/  to that project's .gitignore.`));
+  console.log();
 }

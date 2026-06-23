@@ -27,7 +27,7 @@ dashboard to slice through it.
 
 - **Per-prompt records** — prompt & response text, input/output/cache tokens, model,
   permission **mode**, configured **effort**, context-fill %, USD **cost**, duration,
-  and tool/subagent/thinking counts.
+  invoked **skills**, and tool/subagent/thinking counts.
 - **Accurate accounting** — dedupes streamed transcript lines, attributes **subagent**
   token spend to the parent prompt, and prices each message at *its own* model.
 - **Self-contained per project** — each project's `.claude-usage/` holds its data, a bundled viewer, and your saved view settings (`config.json`). Safe under concurrent sessions. Opt into a combined dashboard with one env var.
@@ -59,9 +59,15 @@ node .claude-usage/viewer/server.mjs   # dashboard for this project → http://l
 
 To remove it: `npx -y github:Kud0o/claude-usage-tracker --uninstall`.
 
-**Upgrading:** re-run the one-liner. It refreshes the shared app, and each project
-re-bundles its own viewer automatically on its next prompt (a version stamp detects
-the change), so existing projects pick up the latest dashboard.
+**Upgrading:** run the update command (or just re-run the one-liner):
+
+```sh
+npx -y github:Kud0o/claude-usage-tracker --update
+```
+
+It refreshes the shared app to the latest version, and each project re-bundles its own
+viewer automatically on its next prompt (a version stamp detects the change), so existing
+projects pick up the latest dashboard. Cloned repo? `git pull && node install.mjs --update`.
 
 ## Installation guide
 
@@ -125,11 +131,12 @@ manually if you want them gone.
   context, active time, top model, busiest workspace, and an estimated cost (de-emphasised, since
   most work isn't billed per API call).
 - **Charts** — tokens over time, context-fill distribution, permission-mode split, prompts by model,
-  and estimated cost / day (all inline SVG, theme-aware).
+  skills invoked, and estimated cost / day (all inline SVG, theme-aware).
 - **Filter bar** — workspace · model · mode · effort · date · free-text search · min-context %.
-- **Table** — grouped by **workspace → session → prompt**, sortable on any column; click a row to
-  open a detail panel with the full prompt and response **rendered as Markdown** (tables, code,
-  lists), plus a usage and cost breakdown.
+- **Table** — grouped by **workspace → session → prompt**, sortable on any column; a per-row badge
+  flags how many **skills** a prompt invoked. Click a row to open a detail panel with the full
+  prompt and response **rendered as Markdown** (tables, code, lists), the invoked skills as chips,
+  plus a usage and cost breakdown.
 - **Theme & locale** — light/dark toggle (defaults to your OS preference, remembered across visits);
   numbers, dates, and currency follow the viewer's browser locale.
 
