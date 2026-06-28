@@ -12,10 +12,8 @@ const state = {
   sort: { key: "ts", dir: -1 },
   filters: { search: "", workspace: "", model: "", mode: "", effort: "", since: "", ctx: 0 },
   group: true,
-  settings: null,                 // full global config from /api/settings
-  fields: {},                     // effective stored-field flags for this project
-  currentKey: null,
-  currentLabel: null,
+  fields: {},                     // this project's stored-field flags
+  enabled: true,                  // is this project tracked
 };
 // Field-group visible? Defaults to true so a missing/unreachable config shows all.
 const has = (g) => state.fields[g] !== false;
@@ -81,8 +79,12 @@ const T_OUT = (e) => (e.usage && e.usage.output) || 0;
 const T_TOTAL = (e) => { const u = e.usage; return u ? (u.input || 0) + (u.output || 0) + (u.cacheCreate || 0) + (u.cacheRead || 0) : 0; };
 const COST = (e) => (e.cost && e.cost.total) || 0;
 
-// ---------- config (saved per project) ----------
+// ---------- config (per project: title/ui + tracking + stored fields) ----------
 async function boot() {
+  await loadConfig();
+  await load();
+}
+async function loadConfig() {
   let cfg = {};
   try { cfg = await (await fetch("/api/config")).json(); } catch {}
   if (cfg.title) {
@@ -93,25 +95,23 @@ async function boot() {
   if (ui.filters) state.filters = { ...state.filters, ...ui.filters };
   if (ui.sort && ui.sort.key) state.sort = ui.sort;
   if (typeof ui.group === "boolean") state.group = ui.group;
-  await loadSettings();
-  await load();
-}
-
-// ---------- tracking / field settings (global config) ----------
-function fieldsFromSettings(s) {
-  if (!s) return {};
-  const entry = s.currentKey && s.tracking && s.tracking.projects ? s.tracking.projects[s.currentKey] : null;
-  return { ...(s.fields || {}), ...((entry && entry.fields) || {}) };
-}
-async function loadSettings() {
-  try {
-    const s = await (await fetch("/api/settings")).json();
-    state.settings = s;
-    state.currentKey = s.currentKey || null;
-    state.currentLabel = s.currentLabel || null;
-    state.fields = fieldsFromSettings(s);
-  } catch { state.settings = null; state.fields = {}; }
+  state.fields = cfg.fields || {};
+  state.enabled = !cfg.tracking || cfg.tracking.enabled !== false;
   applySettingsVisibility();
+}
+// Persist a config patch ({tracking} / {fields}) to this project's config.
+async function saveConfigPatch(patch) {
+  try {
+    const cfg = await (await fetch("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+    })).json();
+    state.fields = cfg.fields || {};
+    state.enabled = !cfg.tracking || cfg.tracking.enabled !== false;
+    renderSettings();
+    applySettingsVisibility();
+    apply();
+    toast("settings saved");
+  } catch { toast("save failed"); }
 }
 // Reflect disabled field-groups onto the chrome: hide table columns + filters.
 function applySettingsVisibility() {
@@ -557,7 +557,7 @@ function textBlock(kind, label, chars, text) {
 }
 function closeDrawer() { $("#drawer").hidden = true; }
 
-// ---------- settings panel (tracking + stored fields) ----------
+// ---------- settings panel (this project only) ----------
 const FIELD_META = [
   ["text", "prompt & response text", "the full prompt/response (largest + most sensitive)"],
   ["tokens", "token usage", "input / output / cache token counts"],
@@ -568,83 +568,36 @@ const FIELD_META = [
   ["counts", "tool counts", "api / subagent / tool / thinking counts"],
   ["meta", "metadata", "git branch, cli version, slug, tier, effort"],
 ];
-function settingsProjects() {
-  const s = state.settings || {};
-  const projs = (s.tracking && s.tracking.projects) || {};
-  const rows = Object.entries(projs).map(([key, v]) => ({ key, ...v }));
-  if (state.currentKey && !projs[state.currentKey]) {
-    rows.unshift({ key: state.currentKey, label: state.currentLabel, enabled: false, missing: true });
-  }
-  return rows;
-}
 function renderSettings() {
-  const s = state.settings;
   const panel = $("#settings-panel");
-  if (!s) { panel.innerHTML = `<div class="muted mono" style="padding:40px">settings unavailable</div>`; return; }
-  const projs = settingsProjects();
-  const projRows = projs.map((p) => {
-    const on = p.enabled !== false;
-    const cur = p.key === state.currentKey;
-    const tags = `${cur ? '<span class="tag" style="color:var(--accent);border-color:var(--accent)">current</span>' : ""}${p.grandfathered ? '<span class="tag">auto</span>' : ""}`;
-    return `<div class="set-row${cur ? " cur" : ""}">
-      <label class="set-toggle"><input type="checkbox" data-proj-toggle="${esc(p.key)}" ${on ? "checked" : ""} />
-        <span class="set-name">${esc(p.label || p.key)} ${tags}</span></label>
-      <span class="set-key mono">${esc(p.key)}</span>
-    </div>`;
-  }).join("") || `<div class="muted mono" style="padding:8px 0">no projects yet — enable one as you use it.</div>`;
-
-  const proj = state.currentKey && s.tracking.projects[state.currentKey];
-  const ovr = (proj && proj.fields) || {};
-  const fieldRows = FIELD_META.map(([g, name, desc]) => {
-    const gv = s.fields[g] !== false;
-    const o = ovr[g];
-    const sel = o === true ? "on" : o === false ? "off" : "inherit";
-    const override = state.currentKey ? `<select class="set-sel" data-proj-field="${g}">
-        <option value="inherit"${sel === "inherit" ? " selected" : ""}>inherit</option>
-        <option value="on"${sel === "on" ? " selected" : ""}>on</option>
-        <option value="off"${sel === "off" ? " selected" : ""}>off</option></select>` : "";
-    return `<div class="set-row">
-      <label class="set-toggle"><input type="checkbox" data-global-field="${g}" ${gv ? "checked" : ""} />
+  const title = (document.getElementById("proj") || {}).textContent || "this project";
+  const fieldRows = FIELD_META.map(([g, name, desc]) => `<div class="set-row">
+      <label class="set-toggle"><input type="checkbox" data-field="${g}" ${has(g) ? "checked" : ""} />
         <span class="set-name">${esc(name)}<small>${esc(desc)}</small></span></label>
-      ${override}
-    </div>`;
-  }).join("");
-
+    </div>`).join("");
   panel.innerHTML = `
     <div class="dhead"><span class="deyebrow">settings</span><button class="btn ghost" data-settings-close>✕ close</button></div>
+    <h2 style="font-family:var(--display);font-weight:500;font-size:20px;margin:0 0 16px">${esc(title)}</h2>
     <section class="set-sec">
-      <h3 class="set-h">tracked projects</h3>
-      <p class="set-note">Opt-in: only enabled projects are recorded. Changes apply from the next prompt. Existing data stays.</p>
-      ${projRows}
+      <h3 class="set-h">tracking</h3>
+      <div class="set-row">
+        <label class="set-toggle"><input type="checkbox" data-enabled ${state.enabled ? "checked" : ""} />
+          <span class="set-name">record this project<small>uncheck to stop recording new prompts here</small></span></label>
+      </div>
     </section>
     <section class="set-sec">
-      <h3 class="set-h">stored fields — global default${state.currentKey ? " · this project" : ""}</h3>
-      <p class="set-note">Disabled groups are stripped before writing (smaller files, more privacy). Already-stored data is not changed.</p>
+      <h3 class="set-h">stored fields</h3>
+      <p class="set-note">Disabled groups are stripped before writing (smaller files, more privacy). Already-stored data is not changed; changes apply from the next prompt.</p>
       ${fieldRows}
     </section>
-    <p class="set-foot mono">~/.claude/usage-tracker/config.json</p>`;
+    <p class="set-foot mono">.claude-usage/config.json</p>`;
 }
 function openSettings() {
   $("#settings-drawer").hidden = false;
   renderSettings();
-  loadSettings().then(() => renderSettings()); // refresh from disk
+  loadConfig().then(renderSettings); // refresh from disk
 }
 function closeSettings() { $("#settings-drawer").hidden = true; }
-async function postSettings(patch) {
-  try {
-    const s = await (await fetch("/api/settings", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
-    })).json();
-    state.settings = s;
-    state.currentKey = s.currentKey || null;
-    state.currentLabel = s.currentLabel || null;
-    state.fields = fieldsFromSettings(s);
-    renderSettings();
-    applySettingsVisibility();
-    apply();
-    toast(s.ok === false ? "busy — retry" : "settings saved");
-  } catch { toast("save failed"); }
-}
 
 // ---------- theme (light / dark, persisted; default = system) ----------
 function setTheme(t) {
@@ -683,14 +636,10 @@ function bind() {
   });
   $("#settings-drawer").addEventListener("change", (e) => {
     const t = e.target;
-    if (t.dataset.projToggle !== undefined) {
-      const p = settingsProjects().find((x) => x.key === t.dataset.projToggle);
-      postSettings({ project: t.dataset.projToggle, enabled: t.checked, label: p && p.label });
-    } else if (t.dataset.globalField !== undefined) {
-      postSettings({ fields: { [t.dataset.globalField]: t.checked } });
-    } else if (t.dataset.projField !== undefined && state.currentKey) {
-      const v = t.value === "on" ? true : t.value === "off" ? false : null;
-      postSettings({ project: state.currentKey, fields: { [t.dataset.projField]: v } });
+    if (t.dataset.enabled !== undefined) {
+      saveConfigPatch({ tracking: { enabled: t.checked } });
+    } else if (t.dataset.field !== undefined) {
+      saveConfigPatch({ fields: { [t.dataset.field]: t.checked } });
     }
   });
   document.querySelectorAll(".grid th.sortable").forEach((th) =>

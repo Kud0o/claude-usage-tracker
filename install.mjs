@@ -70,16 +70,46 @@ function copyApp() {
   fs.cpSync(path.join(REPO, "src", "lib", "config.mjs"), path.join(APP, "viewer", "config.mjs"));
 }
 
-// Create the global config (~/.claude/usage-tracker/config.json) with defaults
-// the first time only — never overwrite the user's project/field choices.
+const FIELD_GROUPS = ["text", "tokens", "cost", "context", "timing", "skills", "counts", "meta"];
+function allFields() {
+  const f = {};
+  for (const g of FIELD_GROUPS) f[g] = true;
+  return f;
+}
+function globalDefaults() {
+  const file = path.join(HOME, ".claude", "usage-tracker", "config.json");
+  let c = readJson(file);
+  const fields = allFields();
+  if (c.fields && typeof c.fields === "object") for (const g of FIELD_GROUPS) if (typeof c.fields[g] === "boolean") fields[g] = c.fields[g];
+  return { enabledDefault: typeof c.enabledDefault === "boolean" ? c.enabledDefault : true, fields };
+}
+
+// Create the global defaults TEMPLATE (~/.claude/usage-tracker/config.json) the
+// first time only — projects inherit a copy of it. Never overwrite user edits.
 function seedGlobalConfig() {
   const file = path.join(HOME, ".claude", "usage-tracker", "config.json");
   if (fs.existsSync(file)) return file;
-  const fields = {};
-  for (const g of ["text", "tokens", "cost", "context", "timing", "skills", "counts", "meta"]) fields[g] = true;
-  const cfg = { schema: 1, tracking: { mode: "allowlist", grandfatherExisting: true, projects: {} }, fields };
+  const cfg = { schema: 2, enabledDefault: true, fields: allFields() };
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
+  return file;
+}
+
+// A --local install makes the project self-contained: write its tracking + field
+// config into <cwd>/.claude-usage/config.json (enabled, seeded from global), so it
+// records immediately without relying on the global template.
+function seedProjectConfig(cwd) {
+  const base = path.join(cwd, ".claude-usage");
+  const file = path.join(base, "config.json");
+  const def = globalDefaults();
+  const c = readJson(file);
+  if (!c.title) c.title = path.basename(cwd);
+  if (typeof c.port !== "number") c.port = 4317;
+  if (!c.ui || typeof c.ui !== "object") c.ui = {};
+  c.tracking = { enabled: true, ...(c.tracking || {}) };
+  c.fields = { ...def.fields, ...(c.fields || {}) };
+  fs.mkdirSync(base, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(c, null, 2) + "\n");
   return file;
 }
 
@@ -161,10 +191,17 @@ if (args.has("--help") || args.has("-h")) {
   ok(`copied app v${VERSION}  ${gray(APP)}`);
   addHook(settingsPath(scope));
   const gc = seedGlobalConfig();
-  ok(`global config  ${gray(gc)}`);
-  console.log();
-  console.log(`  ${green("✓")} ${bold("Tracking is opt-in.")} ${dim("Projects with existing data keep recording.")}`);
-  console.log(dim(`  Enable a new project from the dashboard ⚙ settings, or edit the config file above.`));
+  ok(`global defaults  ${gray(gc)}`);
+  if (scope === "local") {
+    const pc = seedProjectConfig(process.cwd());
+    ok(`project config  ${gray(pc)}`);
+    console.log();
+    console.log(`  ${green("✓")} ${bold("This project is tracked.")} ${dim("Its config lives in the folder; tune it in ⚙ settings.")}`);
+  } else {
+    console.log();
+    console.log(`  ${green("✓")} ${bold("Tracking on by default.")} ${dim("Each project inherits an editable copy of the global defaults.")}`);
+    console.log(dim(`  Disable or tune a project from its dashboard ⚙ settings (writes that project's config).`));
+  }
   console.log();
   console.log(`  ${bold("View a project")}  ${dim("(after its first prompt)")}`);
   console.log(`    ${cmd("cd <your project>")}`);

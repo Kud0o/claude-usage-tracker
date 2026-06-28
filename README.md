@@ -28,10 +28,11 @@ dashboard to slice through it.
 - **Per-prompt records** — prompt & response text, input/output/cache tokens, model,
   permission **mode**, configured **effort**, context-fill %, USD **cost**, duration,
   **first-response latency**, invoked **skills**, and tool/subagent/thinking counts.
-- **You choose what's tracked** — recording is **opt-in per project** (an allowlist;
-  projects with existing data are grandfathered in), and you pick which **field groups**
-  are stored — globally or per project. Disabled groups are stripped before writing
-  (smaller files, more privacy). Manage it all from the dashboard's ⚙ settings or a config file.
+- **You choose what's tracked, per project** — each project owns its config in its own
+  `.claude-usage/` (inherited from a global defaults template, then independent). Toggle
+  recording per project and pick which **field groups** are stored; disabled groups are
+  stripped before writing (smaller files, more privacy). Manage it from that project's
+  ⚙ settings or its config file.
 - **Accurate accounting** — dedupes streamed transcript lines, attributes **subagent**
   token spend to the parent prompt, and prices each message at *its own* model.
 - **Self-contained per project** — each project's `.claude-usage/` holds its data, a bundled viewer, and your saved view settings (`config.json`). Safe under concurrent sessions. Opt into a combined dashboard with one env var.
@@ -152,38 +153,42 @@ manually if you want them gone.
 
 ## Configuration
 
-A single global file controls **which projects are tracked** and **which fields are stored**:
+**Config is per project.** Each project owns its tracking + field choices inside its own
+folder — the same file the viewer uses for title/port/ui:
 
 ```
-~/.claude/usage-tracker/config.json
+<project>/.claude-usage/config.json
 ```
 
 ```jsonc
 {
-  "tracking": {
-    "mode": "allowlist",          // only enabled projects are recorded
-    "grandfatherExisting": true,  // projects with existing data keep recording
-    "projects": {
-      "<encoded-cwd>": { "enabled": true, "label": "MyApp", "fields": { "text": false } }
-    }
-  },
-  "fields": {                     // global defaults; per-project "fields" override these
+  "title": "MyApp", "port": 4317, "ui": { /* saved filters/sort/grouping */ },
+  "tracking": { "enabled": true },   // record this project?
+  "fields": {                        // which field groups to store for this project
     "text": true, "tokens": true, "cost": true, "context": true,
     "timing": true, "skills": true, "counts": true, "meta": true
   }
 }
 ```
 
-- **Opt-in tracking.** A *new* project records nothing until you enable it. Projects that
-  already have recorded data are grandfathered in on their next prompt, so upgrading never
-  drops existing tracking.
+A **global defaults template** lives at `~/.claude/usage-tracker/config.json`
+(`{ "enabledDefault": true, "fields": { … } }`). It is *only* a template:
+
+- **Global install** → each project **inherits a copy** of the defaults into its own
+  `config.json` the first time it's seen, then is independent. Tracking is **on by default**;
+  disable or tune a project from *its own* dashboard without affecting others.
+- **Local install** (`node install.mjs --local`) → the project's `config.json` is written at
+  install time (tracked, defaults applied) — fully self-contained, no reliance on the global file.
+- **Aggregate mode** (`CLAUDE_USAGE_DIR`) is the one exception: with everything pooled in one
+  folder there's no per-project file, so the global defaults govern directly.
+
 - **Field groups** — `text` (prompt/response), `tokens`, `cost`, `context`, `timing`
   (duration + first-response latency), `skills`, `counts`, `meta` (git branch, cli version,
   slug, tier, effort). A disabled group is **stripped before writing**; already-stored data
   is left as-is. `text` off keeps the character counts but drops the text itself.
-- **Two ways to manage it:** the dashboard's **⚙ settings** panel (toggle projects, set global
-  and per-project field groups) or by editing the file directly — the viewer reads it fresh on
-  each request.
+- **Two ways to manage it:** the dashboard's **⚙ settings** panel — which edits **only the
+  project you're viewing** (record toggle + field groups) — or by editing that project's
+  `config.json` directly. The global template is edited by hand for changing future defaults.
 
 The viewer **adapts** to your choices: cards, charts, table columns, drawer rows and filters
 for a disabled (or simply absent) field group don't render.

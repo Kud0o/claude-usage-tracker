@@ -19,19 +19,15 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "public");
 
-// Global tracking/field config module. In a bundled project it sits beside this
-// file (viewer/config.mjs, placed there by the installer); when running from the
-// repo it lives at ../src/lib/config.mjs. Try the bundle path, fall back to repo.
+// Field/defaults config module. In a bundled project it sits beside this file
+// (viewer/config.mjs, placed there by the installer); when running from the repo
+// it lives at ../src/lib/config.mjs. Try the bundle path, fall back to repo.
 let CFG;
 try {
   CFG = await import("./config.mjs");
 } catch {
   CFG = await import("../src/lib/config.mjs");
 }
-
-// The project this viewer represents (null in aggregate mode — many projects).
-const CURRENT_KEY = process.env.CLAUDE_USAGE_DIR ? null : CFG.encCwd(path.dirname(resolveDataDir()));
-const CURRENT_LABEL = process.env.CLAUDE_USAGE_DIR ? null : path.basename(path.dirname(resolveDataDir()));
 
 function resolveDataDir() {
   if (process.env.CLAUDE_USAGE_DIR) return process.env.CLAUDE_USAGE_DIR;
@@ -56,7 +52,7 @@ const MIME = {
   ".svg": "image/svg+xml",
 };
 
-// ---- per-project viewer config ----
+// ---- per-project config (title/port/ui + tracking + stored fields) ----
 function loadConfig() {
   let c = {};
   try {
@@ -64,11 +60,21 @@ function loadConfig() {
   } catch {}
   if (!c.title) c.title = path.basename(path.dirname(DATA_DIR)) || "workspace";
   if (!c.ui || typeof c.ui !== "object") c.ui = {};
+  // Surface tracking + fields (seed a view from the global defaults so the
+  // settings panel always has values, even before the hook has written them).
+  const def = CFG.loadGlobalDefaults();
+  c.tracking = { enabled: def.enabledDefault, ...(c.tracking || {}) };
+  c.fields = { ...def.fields, ...(c.fields || {}) };
   return c;
 }
 function saveConfig(patch) {
   const c = loadConfig();
-  const next = { ...c, ...patch, ui: { ...c.ui, ...(patch && patch.ui) } };
+  const next = {
+    ...c, ...patch,
+    ui: { ...c.ui, ...(patch && patch.ui) },
+    tracking: { ...c.tracking, ...(patch && patch.tracking) },
+    fields: { ...c.fields, ...(patch && patch.fields) },
+  };
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2));
@@ -208,34 +214,6 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, JSON.stringify(saveConfig(patch)));
       }
       return send(res, 200, JSON.stringify(loadConfig()));
-    }
-    if (route === "/api/settings") {
-      if (req.method === "POST") {
-        let body = {};
-        try {
-          body = JSON.parse(await readBody(req)) || {};
-        } catch {}
-        const ok = await CFG.mutateConfig((c) => {
-          if (typeof body.project === "string") {
-            const e = c.tracking.projects[body.project] || (c.tracking.projects[body.project] = { enabled: true });
-            if (typeof body.enabled === "boolean") e.enabled = body.enabled;
-            if (body.label && !e.label) e.label = body.label;
-            if (body.fields && typeof body.fields === "object") {
-              e.fields = e.fields || {};
-              for (const [g, v] of Object.entries(body.fields)) {
-                if (v === null) delete e.fields[g]; // "inherit" → drop override
-                else e.fields[g] = !!v;
-              }
-              if (!Object.keys(e.fields).length) delete e.fields;
-            }
-          } else if (body.fields && typeof body.fields === "object") {
-            c.fields = c.fields || {};
-            for (const [g, v] of Object.entries(body.fields)) c.fields[g] = !!v;
-          }
-        });
-        return send(res, 200, JSON.stringify({ ok: ok !== null, ...CFG.loadConfig(), currentKey: CURRENT_KEY, currentLabel: CURRENT_LABEL }));
-      }
-      return send(res, 200, JSON.stringify({ ...CFG.loadConfig(), currentKey: CURRENT_KEY, currentLabel: CURRENT_LABEL }));
     }
     // static
     let rel = (route === "/" ? "/index.html" : route).replace(/\.\.+/g, "");

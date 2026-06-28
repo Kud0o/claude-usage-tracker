@@ -15,21 +15,14 @@ import {
   settingsCandidates,
   deriveTranscriptPath,
 } from "./lib/paths.mjs";
-import {
-  loadConfig,
-  mutateConfig,
-  isTracked,
-  effectiveFields,
-  applyFieldSelection,
-  encCwd,
-} from "./lib/config.mjs";
+import { ensureProjectConfig, isEnabled, applyFieldSelection } from "./lib/config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Bump when the bundled viewer changes so existing projects refresh their copy
 // on the next prompt (after the user re-installs the app via npx). Keep in step
 // with viewer changes.
-const VIEWER_VERSION = "5";
+const VIEWER_VERSION = "6";
 
 // Make each project self-contained: copy the viewer + a default config into
 // <project>/.claude-usage/ so it can be viewed in place. Skipped in aggregate
@@ -49,14 +42,17 @@ function ensureBundle(cwd) {
       fs.cpSync(viewerSrc, viewerDst, { recursive: true });
       fs.writeFileSync(verFile, VIEWER_VERSION + "\n");
     }
-    const cfg = path.join(base, "config.json");
-    if (!fs.existsSync(cfg)) {
-      fs.mkdirSync(base, { recursive: true });
-      fs.writeFileSync(
-        cfg,
-        JSON.stringify({ title: path.basename(cwd), port: 4317, ui: {} }, null, 2) + "\n"
-      );
-    }
+    // Ensure the viewer keys exist (tracking/fields may already have been seeded
+    // by ensureProjectConfig). Merge, don't clobber.
+    const cfgFile = path.join(base, "config.json");
+    fs.mkdirSync(base, { recursive: true });
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(cfgFile, "utf8")) || {}; } catch {}
+    let changed = false;
+    if (!cfg.title) { cfg.title = path.basename(cwd); changed = true; }
+    if (typeof cfg.port !== "number") { cfg.port = 4317; changed = true; }
+    if (!cfg.ui || typeof cfg.ui !== "object") { cfg.ui = {}; changed = true; }
+    if (changed) fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2) + "\n");
   } catch {}
 }
 
@@ -92,22 +88,10 @@ async function main() {
   if (!transcript && sessionId) transcript = deriveTranscriptPath(cwd, sessionId);
   if (!transcript) return;
 
-  // Opt-in gate: only record projects the user enabled. Projects that already
-  // have recorded data are grandfathered in (lazily added on first sight) so an
-  // upgrade never silently drops existing tracking.
-  const cfg = loadConfig();
-  const { tracked, grandfather } = isTracked(cfg, cwd, fs.existsSync(workspaceFile(cwd)));
-  if (!tracked) return;
-  if (grandfather) {
-    try {
-      await mutateConfig((c) => {
-        const k = encCwd(cwd);
-        if (!c.tracking.projects[k]) {
-          c.tracking.projects[k] = { enabled: true, label: workspaceLabel(cwd), grandfathered: true };
-        }
-      });
-    } catch {}
-  }
+  // Per-project config: seeded from the global defaults on first sight, then
+  // owned by the project. Skip recording when the project disabled tracking.
+  const cfg = await ensureProjectConfig(cwd);
+  if (!isEnabled(cfg)) return;
 
   const effortLevel = readEffort(cwd);
   const turns = buildTurns(transcript, { effortLevel });
@@ -120,9 +104,8 @@ async function main() {
   const sid = sessionId || (turns[0] && turns[0].sessionId);
   if (!sid) return;
 
-  // Strip field groups the user disabled (global default + per-project override).
-  const fields = effectiveFields(cfg, cwd);
-  const slim = turns.map((t) => applyFieldSelection(t, fields));
+  // Strip the field groups this project disabled.
+  const slim = turns.map((t) => applyFieldSelection(t, cfg.fields));
   await upsertSession(workspaceFile(cwd), sid, slim);
   ensureBundle(cwd);
 }

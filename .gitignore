@@ -7,6 +7,7 @@ node_modules/
 # local test scaffolding
 .testdata/
 .testhome/
+.testproj/
 *.log
 
 # unrelated workspace scaffolding / local machine config

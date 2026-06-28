@@ -1,11 +1,14 @@
-// Global tracker config: which projects are tracked + which field groups are
-// stored. Lives at ~/.claude/usage-tracker/config.json (a sibling of app/, so a
-// re-install never wipes it).
+// Tracking + stored-field config.
 //
-// IMPORTANT: this file must stay SELF-CONTAINED — it imports only node builtins
-// and inlines its own `encCwd`. install.mjs copies it next to the viewer
-// (app/viewer/config.mjs) so the per-project bundle, which ships viewer/ ONLY,
-// can import it too. Don't add local imports here.
+// Model: each project owns its config in <project>/.claude-usage/config.json
+// (the same file the viewer uses for title/port/ui). On a project's first sight
+// it is SEEDED from the global defaults template at ~/.claude/usage-tracker/
+// config.json, then it is authoritative for that project. Aggregate mode
+// (CLAUDE_USAGE_DIR) has no per-project folder, so the global defaults govern.
+//
+// IMPORTANT: this file must stay SELF-CONTAINED — node builtins only, inline
+// `encCwd`. install.mjs copies it next to the viewer (app/viewer/config.mjs) so
+// the per-project bundle (which ships viewer/ ONLY) can import it too.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,49 +20,78 @@ export function globalConfigPath() {
   return path.join(os.homedir(), ".claude", "usage-tracker", "config.json");
 }
 
-// Keep identical to paths.mjs `encCwd` — duplicated so this file stays importable
-// from the standalone viewer bundle. ":" and path separators become "-".
+// Keep identical to paths.mjs `encCwd` (duplicated to stay bundle-importable).
 export function encCwd(cwd) {
   return String(cwd || "").replace(/[:\\/]/g, "-").replace(/^-+|-+$/g, "");
 }
 
-export function defaultConfig() {
-  const fields = {};
-  for (const g of FIELD_GROUPS) fields[g] = true;
-  return {
-    schema: 1,
-    tracking: { mode: "allowlist", grandfatherExisting: true, projects: {} },
-    fields,
-  };
+function defaultFields() {
+  const f = {};
+  for (const g of FIELD_GROUPS) f[g] = true;
+  return f;
 }
-
-// Load + normalize. Never throws; falls back to defaults, backfills any missing
-// group to `true` (forward-compat for groups added later).
-export function loadConfig() {
-  const def = defaultConfig();
-  let c;
+function loadJson(file) {
   try {
-    c = JSON.parse(fs.readFileSync(globalConfigPath(), "utf8"));
+    const v = JSON.parse(fs.readFileSync(file, "utf8"));
+    return v && typeof v === "object" ? v : {};
   } catch {
-    return def;
+    return {};
   }
-  if (!c || typeof c !== "object") return def;
-  c.tracking = c.tracking && typeof c.tracking === "object" ? c.tracking : def.tracking;
-  if (!c.tracking.mode) c.tracking.mode = "allowlist";
-  if (typeof c.tracking.grandfatherExisting !== "boolean") c.tracking.grandfatherExisting = true;
-  if (!c.tracking.projects || typeof c.tracking.projects !== "object") c.tracking.projects = {};
-  c.fields = c.fields && typeof c.fields === "object" ? c.fields : {};
-  for (const g of FIELD_GROUPS) if (typeof c.fields[g] !== "boolean") c.fields[g] = true;
-  if (typeof c.schema !== "number") c.schema = 1;
-  return c;
 }
 
-export function saveConfig(next) {
-  const file = globalConfigPath();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
-  fs.renameSync(tmp, file); // atomic on Windows + POSIX
+// The global file is a DEFAULTS TEMPLATE only: { enabledDefault, fields }.
+// Old-shape files (with tracking.projects) are ignored — only fields are read.
+export function loadGlobalDefaults() {
+  const c = loadJson(globalConfigPath());
+  const fields = defaultFields();
+  if (c.fields && typeof c.fields === "object") {
+    for (const g of FIELD_GROUPS) if (typeof c.fields[g] === "boolean") fields[g] = c.fields[g];
+  }
+  const enabledDefault = typeof c.enabledDefault === "boolean" ? c.enabledDefault : true;
+  return { schema: 2, enabledDefault, fields };
+}
+export function defaultGlobalConfig() {
+  return { schema: 2, enabledDefault: true, fields: defaultFields() };
+}
+
+// <cwd>/.claude-usage/config.json — or null in aggregate mode (no per-project folder).
+export function projectConfigPath(cwd) {
+  if (process.env.CLAUDE_USAGE_DIR) return null;
+  return path.join(cwd, ".claude-usage", "config.json");
+}
+
+export function isEnabled(cfg) {
+  return !(cfg && cfg.tracking) || cfg.tracking.enabled !== false;
+}
+
+// Ensure a project has tracking+fields, seeding from the global defaults the
+// first time (merged into any existing {title,port,ui} without clobbering).
+// Returns the effective config. In aggregate mode returns the global defaults
+// (no file written).
+export async function ensureProjectConfig(cwd) {
+  const def = loadGlobalDefaults();
+  const file = projectConfigPath(cwd);
+  if (!file) return { tracking: { enabled: def.enabledDefault }, fields: { ...def.fields } };
+
+  const cur = loadJson(file);
+  const complete =
+    cur.tracking && typeof cur.tracking.enabled === "boolean" &&
+    cur.fields && FIELD_GROUPS.every((g) => typeof cur.fields[g] === "boolean");
+  if (complete) return cur;
+
+  const next = await mutateFile(file, (c) => {
+    c.tracking = c.tracking && typeof c.tracking === "object" ? c.tracking : {};
+    if (typeof c.tracking.enabled !== "boolean") c.tracking.enabled = def.enabledDefault;
+    c.fields = c.fields && typeof c.fields === "object" ? c.fields : {};
+    for (const g of FIELD_GROUPS) if (typeof c.fields[g] !== "boolean") c.fields[g] = def.fields[g];
+  });
+  if (next) return next;
+  // Lock unavailable — fall back to an in-memory seed so this run still works.
+  return {
+    ...cur,
+    tracking: { enabled: typeof (cur.tracking || {}).enabled === "boolean" ? cur.tracking.enabled : def.enabledDefault, ...(cur.tracking || {}) },
+    fields: { ...def.fields, ...(cur.fields || {}) },
+  };
 }
 
 // ---- cross-process lock (same algorithm as src/lib/store.mjs, inlined) ----
@@ -68,12 +100,9 @@ const LOCK_TIMEOUT_MS = 2_000;
 const LOCK_RETRY_MS = 25;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Read-modify-write the global config under an exclusive lock so the hook
-// (grandfather add) and the viewer (settings POST) can't clobber each other.
-// Returns the saved config, or null if the lock couldn't be taken (caller treats
-// as best-effort — the next attempt self-heals).
-export async function mutateConfig(fn) {
-  const file = globalConfigPath();
+// Read-modify-write any JSON config file under an exclusive lock. Returns the
+// saved object, or null if the lock couldn't be taken (caller best-effort).
+export async function mutateFile(file, fn) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const lock = `${file}.lock`;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
@@ -98,33 +127,16 @@ export async function mutateConfig(fn) {
     }
   }
   try {
-    const cfg = loadConfig();
-    fn(cfg);
-    saveConfig(cfg);
-    return cfg;
+    const obj = loadJson(file);
+    fn(obj);
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + "\n");
+    fs.renameSync(tmp, file);
+    return obj;
   } finally {
-    try {
-      fs.closeSync(fd);
-    } catch {}
-    try {
-      fs.rmSync(lock, { force: true });
-    } catch {}
+    try { fs.closeSync(fd); } catch {}
+    try { fs.rmSync(lock, { force: true }); } catch {}
   }
-}
-
-// Is this project tracked? `dataFileExists` lets the caller pass whether the
-// workspace already has recorded data (for lazy grandfathering).
-export function isTracked(cfg, cwd, dataFileExists) {
-  const entry = cfg.tracking.projects[encCwd(cwd)];
-  if (entry) return { tracked: entry.enabled !== false, grandfather: false };
-  if (cfg.tracking.grandfatherExisting && dataFileExists) return { tracked: true, grandfather: true };
-  return { tracked: false, grandfather: false };
-}
-
-// Effective stored-field flags for a project = global defaults + project override.
-export function effectiveFields(cfg, cwd) {
-  const entry = cfg.tracking.projects[encCwd(cwd)];
-  return { ...cfg.fields, ...(entry && entry.fields ? entry.fields : {}) };
 }
 
 // Map each field group to the record keys it controls. Core keys
@@ -145,7 +157,7 @@ const GROUP_KEYS = {
 export function applyFieldSelection(record, fields) {
   const out = { ...record };
   for (const g of FIELD_GROUPS) {
-    if (fields[g] === false) for (const k of GROUP_KEYS[g]) delete out[k];
+    if (fields && fields[g] === false) for (const k of GROUP_KEYS[g]) delete out[k];
   }
   return out;
 }
